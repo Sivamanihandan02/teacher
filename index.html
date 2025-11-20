@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Virtual Teacher — Current Period View (Always Audio)</title>
+<style>
+  :root{--bg:#071026;--card:#0f1724;--muted:#98a0b3;--accent:#7c3aed}
+  *{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;margin:0}
+  body{background:linear-gradient(180deg,#050614,#071026);color:#e6eef8;min-height:100vh;padding:22px;display:flex;align-items:center;justify-content:center}
+  .card{width:760px;max-width:96vw;background:linear-gradient(180deg,#0b1220,#071026);border-radius:14px;padding:18px;box-shadow:0 18px 50px rgba(0,0,0,0.6)}
+  .top{display:flex;align-items:center;gap:18px}
+  .clock{font-size:28px;font-weight:700}
+  .date{color:var(--muted)}
+  .current{display:flex;gap:20px;margin-top:18px;align-items:center}
+  .avatar{width:180px;height:220px;border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .info{flex:1}
+  .info h2{margin:0;font-size:20px}
+  .meta{color:var(--muted);margin-top:6px}
+  .big{font-size:18px;font-weight:700;margin-top:10px}
+  .small{color:var(--muted);font-size:13px;margin-top:8px}
+  .controls{display:flex;gap:8px;align-items:center;margin-top:12px}
+  .pill{background:rgba(255,255,255,0.03);padding:6px 10px;border-radius:999px;color:var(--muted)}
+  button{background:linear-gradient(90deg,var(--accent),#4f46e5);border:none;padding:8px 12px;border-radius:10px;color:white;cursor:pointer}
+  .hidden{display:none}
+  footer{color:var(--muted);font-size:13px;margin-top:12px;text-align:center}
+</style>
+</head>
+<body>
+  <div class="card" role="main">
+    <div class="top">
+      <div>
+        <div class="clock" id="clock">--:--:--</div>
+        <div class="date" id="date">Loading date...</div>
+      </div>
+      <div style="margin-left:auto;text-align:right">
+        <div class="pill">Mode: <strong>Always-on</strong></div>
+        <div style="height:8px"></div>
+        <div id="nextUp" class="small">Next: —</div>
+      </div>
+    </div>
+
+    <div class="current">
+      <div class="avatar" id="avatar">
+        <!-- SVG avatar inserted here -->
+      </div>
+
+      <div class="info">
+        <h2 id="currentLabel">Loading current period...</h2>
+        <div class="meta" id="currentTeacher">—</div>
+        <div class="big" id="timeRange">—</div>
+        <div class="small" id="remaining">Remaining: —</div>
+
+        <div class="controls">
+          <button id="tryEnableAudio" class="hidden">Enable sound (tap if muted)</button>
+          <div class="pill" id="audioStatus">Audio: <strong id="audioText">attempting</strong></div>
+          <div class="pill" id="voiceInfo">Voices: <span id="voicesCount">0</span></div>
+          <div style="margin-left:auto" class="small" id="logMsg">Status OK</div>
+        </div>
+
+        <div class="small" style="margin-top:12px" id="currentLine">—</div>
+      </div>
+    </div>
+
+    <footer>
+      Keeps running while this page is open. If you don't hear sound, tap "Enable sound".
+    </footer>
+  </div>
+
+<script>
+/* Virtual Teacher — Current-Period View (Always try to enable audio)
+   - Always reads browser clock, shows current slot only
+   - Attempts to enable AudioContext & speech automatically on load
+   - If browser blocks audio, shows small "Enable sound" button
+   - Still uses non-repeating dialogue pools, avatars, bells, ambient
+*/
+
+// ---------- Defaults ----------
+const DEFAULTS = {
+  schedule: [
+    { time: '09:30', label: 'Supervision', teacher: 'Shanmuga Priya', type: 'supervision', durationMin:30 },
+    { time: '10:00', label: 'Period 1', teacher: 'Rasika', type: 'period-start', period:1, durationMin:40 },
+    { time: '10:40', label: 'Break', teacher: null, type: 'break', durationMin:20 },
+    { time: '11:00', label: 'Period 2', teacher: 'Vasantha', type: 'period-start', period:2, durationMin:40 },
+    { time: '11:40', label: 'Period 3', teacher: 'Arul Beulah', type: 'period-start', period:3, durationMin:40 },
+    { time: '12:20', label: 'Pre-lunch', teacher: 'Shanmuga Priya', type: 'supervision', durationMin:10 },
+    { time: '12:30', label: 'Lunch', teacher: 'Shanmuga Priya', type: 'break', durationMin:45 },
+    { time: '13:15', label: 'Period 4', teacher: 'Deciba', type: 'period-start', period:4, durationMin:40 },
+    { time: '13:55', label: 'Period 5', teacher: 'Mari Thangam', type: 'period-start', period:5, durationMin:40 },
+    { time: '14:35', label: 'Final Wrap', teacher: 'Shanmuga Priya', type: 'final-wrap', durationMin:40 }
+  ],
+  teachers: [
+    { name:'Rasika', color:'#d6a7b8' },
+    { name:'Vasantha', color:'#7aa9e3' },
+    { name:'Arul Beulah', color:'#b98ee6' },
+    { name:'Deciba', color:'#7dd4a6' },
+    { name:'Mari Thangam', color:'#f0b37a' },
+    { name:'Shanmuga Priya', color:'#f1d397' }
+  ],
+  pools: {
+    'Rasika':[ "Good morning — I am Rasika. Period one begins now. Please begin.","Rasika here — keep your focus and take notes.","Small tip: breathe slowly and read the heading.","Rasika: steady progress is better than haste." ],
+    'Vasantha':[ "Hello — I'm Vasantha. Period two starts now.","Vasantha: keep your questions short and clear.","Vasantha: try summarizing the last paragraph in one sentence." ],
+    'Arul Beulah':[ "This is Arul Beulah — period three begins now.","Arul Beulah: keep your answers concise.","Try to highlight the most important lines." ],
+    'Deciba':[ "Deciba here — period four starts now. Let's proceed.","Deciba: energetic pace, but careful work.","Try explaining the idea in your own words." ],
+    'Mari Thangam':[ "Good afternoon — I am Mari Thangam. Period five begins now.","Mari Thangam: steady effort counts more than speed.","Make a short summary of what you learned today." ],
+    'Shanmuga Priya':[ "Good morning students — welcome. I'm Shanmuga Priya and I'm here until classes begin.","Let's start the day calmly — drink some water and prepare.","I hope you're rested — today we'll keep things steady." ]
+  }
+};
+
+// ---------- State ----------
+let state = {
+  schedule: [], teachers: [], pools: {}, voiceMap:{}, used:{},
+  synthVoices: [], audioCtx: null, enabledAudio: false, lastTriggered:{}
+};
+
+// ---------- Utilities ----------
+const $ = s => document.querySelector(s);
+function hhmmToDate(hhmm){ const [hh,mm]=hhmm.split(':').map(Number); const d=new Date(); d.setHours(hh,mm,0,0); return d; }
+function now(){ return new Date(); }
+function pad(n){ return String(n).padStart(2,'0'); }
+function to12(hhmm){ const [hh,mm]=hhmm.split(':').map(Number); let h=hh%12; if(h===0) h=12; const ap=hh>=12?'PM':'AM'; return `${h}:${pad(mm)} ${ap}`; }
+
+// ---------- Load defaults ----------
+function loadDefaults(){
+  state.schedule = DEFAULTS.schedule.slice();
+  state.teachers = DEFAULTS.teachers.map(t=>({...t}));
+  state.pools = JSON.parse(JSON.stringify(DEFAULTS.pools));
+  state.used = {};
+}
+loadDefaults();
+
+// ---------- Clock & current period ----------
+function getCurrentSlot(d){
+  for(const s of state.schedule){
+    const start = hhmmToDate(s.time);
+    const dur = (s.durationMin || 40) * 60 * 1000;
+    const end = new Date(start.getTime()+dur);
+    if(d >= start && d < end) return {...s, start, end};
+  }
+  return null;
+}
+function nextUp(){
+  const nowd = new Date();
+  let next = null;
+  for(const s of state.schedule){
+    const st = hhmmToDate(s.time);
+    if(st > nowd && (!next || st < hhmmToDate(next.time))) next = s;
+  }
+  return next;
+}
+function updateClockUI(){
+  const d = new Date();
+  $('#clock').textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  $('#date').textContent = d.toDateString();
+  const cur = getCurrentSlot(d);
+  if(cur){
+    $('#currentLabel').textContent = cur.label;
+    $('#currentTeacher').textContent = cur.teacher || '—';
+    $('#timeRange').textContent = `${to12(cur.time)} — ${to12(msToHHMM(cur.end - cur.start)) || to12(cur.end.getHours()+':'+cur.end.getMinutes())}`;
+    // remaining
+    const remMs = cur.end - d;
+    $('#remaining').textContent = `Remaining: ${msToHms(remMs)}`;
+    // avatar
+    renderAvatar(cur.teacher);
+  } else {
+    $('#currentLabel').textContent = 'No active event';
+    $('#currentTeacher').textContent = '—';
+    $('#timeRange').textContent = '—';
+    $('#remaining').textContent = '--';
+    renderAvatar(null);
+  }
+  const n = nextUp();
+  $('#nextUp').textContent = n ? `${to12(n.time)} • ${n.label}` : '—';
+}
+function msToHms(ms){
+  if(ms<=0) return '0:00';
+  const s = Math.floor(ms/1000);
+  const m = Math.floor(s/60)%60;
+  const h = Math.floor(s/3600);
+  return h ? `${h}h ${m}m` : `${m}m ${s%60}s`;
+}
+function msToHHMM(ms){
+  // helper to return hh:mm string for display (not used much)
+  const d = new Date(ms);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ---------- Non-repeating pools ----------
+function pickLine(teacher){
+  const pool = state.pools[teacher] || [];
+  if(!pool.length) return '';
+  if(!state.used[teacher]) state.used[teacher] = new Set();
+  if(state.used[teacher].size >= pool.length) state.used[teacher].clear();
+  let idx;
+  do idx = Math.floor(Math.random()*pool.length); while(state.used[teacher].has(idx) && state.used[teacher].size < pool.length);
+  state.used[teacher].add(idx);
+  return pool[idx];
+}
+
+// ---------- Avatar (simple SVG mature style) ----------
+function renderAvatar(name){
+  const container = $('#avatar');
+  if(!name){ container.innerHTML = `<div style="color:var(--muted)">No teacher</div>`; return; }
+  const t = state.teachers.find(x=>x.name===name) || {color:'#999', name};
+  const svg = generateAvatarSVG(name, t.color);
+  container.innerHTML = svg;
+}
+function generateAvatarSVG(name, color){
+  const skin='#f3d6b9', hair=color || '#9aa';
+  return `<svg viewBox="0 0 160 200" width="160" height="200" xmlns="http://www.w3.org/2000/svg">
+    <rect x="0" y="0" width="160" height="200" rx="12" fill="transparent"/>
+    <ellipse cx="80" cy="62" rx="60" ry="34" fill="${hair}" />
+    <ellipse cx="80" cy="100" rx="50" ry="64" fill="${skin}" />
+    <circle cx="62" cy="96" r="6" fill="#222" /><circle cx="98" cy="96" r="6" fill="#222" />
+    <path d="M64 128 q16 12 32 0" stroke="#a55" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <text x="80" y="170" text-anchor="middle" font-size="14" fill="#fff">${name}</text>
+  </svg>`;
+}
+
+// ---------- Voice & TTS ----------
+function loadVoices(){
+  state.synthVoices = speechSynthesis.getVoices() || [];
+  // prefer female-like voices (best-effort)
+  const female = state.synthVoices.filter(v=> /female|woman|fem/i.test(v.name + ' ' + v.lang + ' ' + (v.voiceURI||'')));
+  const pool = female.length >= 6 ? female : state.synthVoices;
+  state.teachers.forEach((t,i)=> {
+    if(!state.voiceMap[t.name]){
+      const pick = pool.length ? pool[i % pool.length] : null;
+      state.voiceMap[t.name] = pick ? {name:pick.name, lang:pick.lang, voiceURI:pick.voiceURI||pick.name, pitch:1.0, rate:1.0} : {pitch:1.0, rate:1.0};
+    }
+  });
+  $('#voicesCount').textContent = state.synthVoices.length;
+}
+if('speechSynthesis' in window){
+  loadVoices();
+  if(speechSynthesis.onvoiceschanged !== undefined) speechSynthesis.onvoiceschanged = loadVoices;
+}
+
+// Try to enable audio automatically
+async function tryEnableAudioAutomated(){
+  try{
+    state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // some browsers require resume
+    if(state.audioCtx.state === 'suspended'){ await state.audioCtx.resume().catch(()=>{}); }
+    state.enabledAudio = true;
+    $('#audioText').textContent = 'on';
+    $('#tryEnableAudio').classList.add('hidden');
+    log('Audio auto-enabled (attempt).');
+  } catch(e){
+    state.enabledAudio = false;
+    $('#audioText').textContent = 'blocked';
+    $('#tryEnableAudio').classList.remove('hidden');
+    log('Audio auto-enable blocked — tap Enable sound.');
+  }
+}
+
+// manual enable button (fallback)
+$('#tryEnableAudio').addEventListener('click', async ()=>{
+  try{
+    state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    await state.audioCtx.resume().catch(()=>{});
+    state.enabledAudio = true;
+    $('#audioText').textContent = 'on';
+    $('#tryEnableAudio').classList.add('hidden');
+    // speak immediate context
+    const cur = getCurrentSlot(new Date());
+    const msg = cur && cur.teacher ? (pickLine(cur.teacher) || `${cur.teacher} is present.`) : 'Scheduler running.';
+    if(cur && state.enabledAudio) { playBell(); speak(cur.teacher, msg, true); }
+    log('Audio enabled by user.');
+  } catch(e){ log('Enable failed: '+e.message); }
+});
+
+// TTS caller
+function speak(teacherName, text, interrupt=false){
+  if(!('speechSynthesis' in window)) { log('TTS not supported'); return; }
+  const map = state.voiceMap[teacherName] || {};
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = map.lang || 'en-US';
+  const found = state.synthVoices.find(v => v.name === map.name || v.voiceURI === map.voiceURI) || state.synthVoices[0];
+  if(found) u.voice = found;
+  u.pitch = map.pitch || 1.0;
+  u.rate = map.rate || 1.0;
+  u.onstart = ()=> { $('#currentLine').textContent = text; renderAvatar(teacherName); };
+  u.onend = ()=> { /* clear or keep last line */ };
+  if(interrupt) speechSynthesis.cancel();
+  try { speechSynthesis.speak(u); } catch(e){ log('Speak failed: '+e.message); }
+}
+
+// small bell
+function ensureAudio(){ if(!state.audioCtx) state.audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }
+function playBell(){ if(!state.enabledAudio) return; try{ ensureAudio(); const ctx = state.audioCtx; const o = ctx.createOscillator(); const g = ctx.createGain(); o.type='sine'; o.frequency.value=880; o.connect(g); g.connect(ctx.destination); const now = ctx.currentTime; g.gain.setValueAtTime(0.0001, now); g.gain.linearRampToValueAtTime(0.05, now+0.01); o.frequency.exponentialRampToValueAtTime(600, now+0.25); g.gain.exponentialRampToValueAtTime(0.0001, now+0.6); o.start(now); o.stop(now+0.7); }catch(e){ /* ignore */ } }
+
+// ---------- Non-repeating & event handler ----------
+function pickAndSpeakFor(item){
+  if(item.type === 'period-start'){
+    const t = item.teacher;
+    if($('#bellBefore').checked) playBell();
+    const startLine = pickLine(t) || `${t} starts now.`;
+    if(state.enabledAudio) speak(t, startLine, true);
+    else log(`(Muted) ${t}: ${startLine}`);
+    // schedule midpoints and end (relative durations)
+    const dur = (item.durationMin || 40) * 60 * 1000;
+    setTimeout(()=>{ const m1 = pickLine(t); if(m1){ if(state.enabledAudio) speak(t,m1); else log(`(Muted) mid1: ${t}: ${m1}`); } }, Math.round(dur/3));
+    setTimeout(()=>{ const m2 = pickLine(t); if(m2){ if(state.enabledAudio) speak(t,m2); else log(`(Muted) mid2: ${t}: ${m2}`); } }, Math.round(2*dur/3));
+    setTimeout(()=>{ const endL = `Thank you, students — period ${item.period} is over.`; if(state.enabledAudio) speak(t,endL); else log(`(Muted) end: ${endL}`); }, dur);
+  } else if(item.type === 'supervision'){
+    const t = item.teacher;
+    if($('#bellBefore').checked) playBell();
+    const line = pickLine(t) || `${t} supervising.`;
+    if(state.enabledAudio) speak(t,line); else log(`(Muted) supervision: ${t}: ${line}`);
+  } else if(item.type === 'final-wrap'){
+    const t = item.teacher;
+    const arr = [`Well done today — you completed your sessions. Good job!`,`Take a short rest now and prepare for tomorrow.`, pickLine(t)];
+    arr.forEach((ln,i)=> setTimeout(()=> { if(ln){ if(state.enabledAudio) speak(t,ln); else log(`(Muted) final: ${ln}`); } }, i*1800));
+  } else {
+    // break or misc
+    if($('#bellBefore').checked) playBell();
+  }
+}
+
+// ---------- Scheduler loop ----------
+let schedulerHandle = null;
+function runScheduler(){
+  const nowD = new Date();
+  // check schedule items match current minute and trigger once
+  for(const item of state.schedule){
+    const st = hhmmToDate(item.time);
+    if(st.getHours()===nowD.getHours() && st.getMinutes()===nowD.getMinutes()){
+      const key = item.time + '|' + item.label;
+      if(!state.lastTriggered[key] || (Date.now() - state.lastTriggered[key] > 55*1000)){
+        state.lastTriggered[key] = Date.now();
+        pickAndSpeakFor(item);
+      }
+    }
+  }
+  updateClockUI();
+}
+function startSchedulerAlways(){
+  // try to auto-enable audio first
+  tryEnableAudioAutomated();
+  // start tick every 5s
+  if(schedulerHandle) clearInterval(schedulerHandle);
+  schedulerHandle = setInterval(runScheduler, 5000);
+  // also run immediately once
+  runScheduler();
+}
+
+// ---------- Initialization ----------
+function init(){
+  // set state from defaults
+  state.schedule = DEFAULTS.schedule.slice();
+  state.teachers = DEFAULTS.teachers.map(t=>({...t}));
+  state.pools = JSON.parse(JSON.stringify(DEFAULTS.pools));
+  // initial voice load
+  if('speechSynthesis' in window){ if(speechSynthesis.getVoices().length===0){ setTimeout(()=>{ if('speechSynthesis' in window) state.synthVoices = speechSynthesis.getVoices(); loadVoices(); }, 400); } else { state.synthVoices = speechSynthesis.getVoices(); } }
+  loadVoices();
+  // start clock update
+  setInterval(updateClockUI, 1000);
+  updateClockUI();
+  // start scheduler always
+  startSchedulerAlways();
+  // if audio blocked, show button
+  setTimeout(()=> { if(!state.enabledAudio){ $('#tryEnableAudio').classList.remove('hidden'); $('#audioText').textContent='blocked'; } }, 800);
+}
+function loadVoices(){
+  try{ state.synthVoices = speechSynthesis.getVoices() || []; const female = state.synthVoices.filter(v=> /female|woman|fem/i.test(v.name + ' ' + v.lang + ' ' + (v.voiceURI||''))); const pool = female.length>=6 ? female : state.synthVoices; state.teachers.forEach((t,i)=>{ if(!state.voiceMap[t.name]){ const pick = pool.length ? pool[i % pool.length] : null; state.voiceMap[t.name] = pick ? {name:pick.name, lang:pick.lang, voiceURI:pick.voiceURI||pick.name, pitch:1, rate:1} : {pitch:1, rate:1}; } }); $('#voicesCount').textContent = state.synthVoices.length; }catch(e){ console.warn(e); }
+}
+
+// ---------- Small helpers ----------
+function log(msg){ const el = document.getElementById('logMsg'); el.textContent = msg; console.log(msg); }
+
+// ---------- Start ----------
+init();
+
+</script>
+</body>
+</html>
